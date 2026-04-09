@@ -1,0 +1,2 @@
+EII computation completed at 2025-12-30 19:00:37.094768
+EII pipeline run completed successfully.

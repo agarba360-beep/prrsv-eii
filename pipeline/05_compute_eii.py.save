@@ -1,0 +1,160 @@
+base_dir = os.path.dirname(__file__)
+codon_alignment = os.path.join(base_dir, "../data/alignments/orf5_codon_aligned.fasta")
+output_signals = os.path.join(base_dir, "../data/signals/")
+os.makedirs(output_signals, exist_ok=True)
+
+# --- Load alignment ---
+records = list(SeqIO.parse(codon_alignment, "fasta"))
+if not records:
+    print("❌ No codon-aligned sequences found. Run 04_codon_alignment.py first.")
+    exit(1)
+
+print(f"✅ Loaded {len(records)} codon-aligned sequences.")
+
+# --- Helper: compute Shannon entropy per site (epitope drift proxy) ---
+def compute_entropy(records):
+    seqs = [str(r.seq) for r in records]
+    L = len(seqs[0])
+    ent = []
+    for i in range(L):
+        column = [s[i] for s in seqs if s[i] != '-']
+        if not column:
+            ent.append(0)
+        else:
+            counts = Counter(column)
+            freqs = np.array(list(counts.values())) / len(column)
+            ent.append(entropy(freqs, base=2))
+    return np.array(ent)
+
+# --- Helper: simple dN/dS proxy (selection pressure) ---
+def compute_dn_ds(records):
+    """Approximate dN/dS by codon variability."""
+    seqs = [str(r.seq) for r in records]
+    L = len(seqs[0])
+    variability = []
+    for i in range(0, L, 3):
+        codons = [s[i:i+3] for s in seqs if '-' not in s[i:i+3]]
+        if len(codons) < 2:
+            variability.append(0)
+        else:
+            counts = Counter(codons)
+            freqs = np.array(list(counts.values())) / len(codons)
+            variability.append(entropy(freqs, base=2))
+    return np.array(variability)
+
+# --- ✅ FIXED Helper: glycosylation motif detection ---
+def compute_glycosylation(records):
+    """Detects N-linked glycosylation motifs (N-X-S/T, where X != P)."""
+    motif = re.compile(r'N[^P][ST]')
+    glyco_counts = []
+    for r in records:
+        seq = str(r.seq)
+        matches = motif.findall(seq)
+        glyco_counts.append(len(matches))
+
+    normed = np.array(glyco_counts, dtype=float)
+    if np.max(normed) > 0:
+        normed /= np.max(normed)
+    return normed
+
+# --- ✅ FIXED Helper: phylogenetic instability proxy ---
+def compute_phylo_instability(records):
+    """
+    Estimates phylogenetic instability as tree imbalance (proxy).
+    Uses Neighbor-Joining tree built from identity distance matrix.
+    """
+    aln = MultipleSeqAlignment(records)  # convert list to alignment
+    calculator = DistanceCalculator('identity')
+    dm = calculator.get_distance(aln)
+
+    constructor = DistanceTreeConstructor(calculator, 'nj')
+    tree = constructor.build_tree(aln)
+
+    # Instability proxy = standard deviation of terminal branch lengths / total tips
+    tips = tree.count_terminals()
+    branch_lengths = [cl.branch_length or 0 for cl in tree.get_terminals()]
+    imbalance = np.std(branch_lengths)
+    return imbalance / max(1, tips)
+
+# --- Helper: distance outlier detection ---
+def compute_distance_outliers(records):
+    aln = MultipleSeqAlignment(records)
+    calculator = DistanceCalculator('identity')
+    dm = calculator.get_distance(aln)
+    mean_dists = np.mean(dm.matrix, axis=1)
+    zscores = (mean_dists - np.mean(mean_dists)) / np.std(mean_dists)
+    outlier_score = np.mean(np.abs(zscores))
+    return outlier_score
+
+# --- Compute all signals ---
+print("🧩 Computing evolutionary signals...")
+
+entropy_signal = compute_entropy(records)
+dn_ds_signal = compute_dn_ds(records)
+glyco_signal = compute_glycosylation(records)
+phylo_signal = compute_phylo_instability(records)
+outlier_signal = compute_distance_outliers(records)
+
+# --- Normalize each signal (0-1) ---
+def normalize(arr):
+    arr = np.array(arr, dtype=float)
+    return (arr - np.min(arr)) / (np.max(arr) - np.min(arr) + 1e-8)
+
+entropy_norm = normalize(entropy_signal)
+dn_ds_norm = normalize(dn_ds_signal)
+glyco_norm = normalize(glyco_signal)
+phylo_norm = normalize([phylo_signal])
+outlier_norm = normalize([outlier_signal])
+
+# --- Combine into EII ---
+w1, w2, w3, w4, w5 = 1, 1, 1, 1, 1
+EII = (w1*np.mean(entropy_norm) + w2*np.mean(dn_ds_norm) +
+       w3*np.mean(glyco_norm) + w4*np.mean(phylo_norm) +
+       w5*np.mean(outlier_norm)) / 5
+
+print(f"✅ EII computed: {EII:.4f}")
+
+# --- Save to database ---
+conn = mysql.connector.connect(**config)
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS eii_signals (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    signal_name VARCHAR(50),
+    mean_value FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS eii_index (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    eii_value FLOAT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+
+signals = {
+    'EpitopeDrift': float(np.mean(entropy_norm)),
+    'SelectionPressure': float(np.mean(dn_ds_norm)),
+    'GlycosylationDynamics': float(np.mean(glyco_norm)),
+    'PhylogeneticInstability': float(np.mean(phylo_norm)),
+    'DistanceOutliers': float(np.mean(outlier_norm))
+}
+
+for name, value in signals.items():
+    cursor.execute("INSERT INTO eii_signals (signal_name, mean_value) VALUES (%s, %s)", (name, value))
+
+cursor.execute("INSERT INTO eii_index (eii_value) VALUES (%s)", (EII,))
+conn.commit()
+conn.close()
+
+# --- Export results ---
+signal_df = pd.DataFrame(list(signals.items()), columns=["Signal", "NormalizedValue"])
+signal_df["EII"] = EII
+csv_path = os.path.join(output_signals, "eii_summary.csv")
+signal_df.to_csv(csv_path, index=False)
+
+print(f"📊 EII Summary exported to: {csv_path}")
+
