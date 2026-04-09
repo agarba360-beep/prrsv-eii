@@ -1,7 +1,7 @@
 # 🧬 PRRSV ORF5 Evolutionary Intelligence System (EII Platform)
 
 ## 🔍 Overview
-
+This platform is designed for research, surveillance, and exploratory evolutionary analysis of PRRSV.
 The **PRRSV ORF5 Evolutionary Intelligence System** is an automated genomic surveillance platform designed to monitor the evolutionary dynamics of PRRSV (Porcine Reproductive and Respiratory Syndrome Virus) using ORF5 gene sequences.
 
 The system integrates multiple biologically meaningful signals into a unified metric called the **Evolutionary Intelligence Index (EII)**, enabling real-time tracking of viral evolution.
@@ -73,7 +73,7 @@ prrsv_eii/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/prrsv-eii.git
+git clone https://github.com/agarba360-beep/prrsv-eii.git
 cd prrsv-eii
 ```
 
@@ -128,7 +128,8 @@ python dashboard/dashboard_readonly.py
 Open in browser:
 
 ```
-http://YOUR_SERVER_IP:8055
+https://prrsv-orf5.aiconceptlimited.com.ng/
+
 ```
 
 ---
