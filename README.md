@@ -1,4 +1,10 @@
 # 🧬 PRRSV ORF5 Evolutionary Intelligence System (EII Platform)
+## 🚀 Live System
+
+- 🌐 Dashboard: https://prrsv-orf5.aiconceptlimited.com.ng/
+- ⚙️ Automated pipeline: NCBI → QC → Alignment → EII
+- 📊 Real-time evolutionary intelligence monitoring
+
 ## 📊 Live Dashboard
 
 👉 https://prrsv-orf5.aiconceptlimited.com.ng/
